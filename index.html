@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Decentralized Voting APP</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.2.13/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/web3@1.10.0/dist/web3.min.js"></script>
+    <style>
+        body {
+            font-size: 1.5em;
+            font-family: Arial, sans-serif;
+        }
+
+       .header {
+            height: 80px;
+            background-color: #ed7935;
+            color: #fff;
+            text-align: center;
+            line-height: 60px;
+            font-size: 1.2em;
+        }
+
+       .chart-container {
+            margin-top: 80px;
+            display: flex;
+            justify-content: space-around;
+            align-items: flex-end;
+            height: 300px;
+            border-bottom: 1px solid #000;
+        }
+
+       .bar {
+            width: 40px;
+            background-color: #8884d8;
+            margin: 0 10px;
+            transition: height 0.3s ease;
+        }
+
+       .bar-label {
+            text-align: center;
+            margin-top: 5px;
+            font-size: 1em;
+        }
+
+       .vote-count {
+            text-align: center;
+            margin-bottom: 5px;
+            font-size: 1em;
+        }
+
+       .feedback-button {
+            margin-top: 20px;
+        }
+
+       .feedback-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            justify-content: center;
+            align-items: center;
+        }
+
+       .feedback-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            width: 80%;
+            max-width: 500px;
+        }
+
+       .feedback-list {
+            margin-top: 20px;
+        }
+
+        textarea {
+            font-size: 1em;
+            padding: 10px;
+            width: 80%;
+            margin-bottom: 20px;
+        }
+
+        button {
+            font-size: 1em;
+            padding: 10px 20px;
+            margin-bottom: 20px;
+        }
+
+        h2 {
+            font-size: 1.5em;
+        }
+
+        h3 {
+            font-size: 1.3em;
+        }
+
+        p {
+            font-size: 1em;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <nav class="header">Decentralized Voting APP</nav>
+        <main>
+            <div v-if="step === 1">
+                <h2>Distribute Voting Rights</h2>
+                <p>Host Address: {{ host }}</p>
+                <textarea v-model="voterAddresses" placeholder="Please enter voter addresses, separated by commas"></textarea>
+                <button @click="mandate">Start Distributing Votes</button>
+            </div>
+            <div v-if="step === 2">
+                <h2>Voting Board</h2>
+                <div v-for="(candidate, index) in candidatesInfo" :key="index">
+                    <p>{{ index + 1 }}. {{ candidate.name }} - Votes: {{ candidate.votes }}</p>
+                    <button :disabled="isVoteDisabled(index)" @click="vote(index)">{{ getButtonText(index) }}</button>
+                    <span v-if="isVoteDisabled(index)">{{ getRemainingTime(index) }}</span>
+                </div>
+                <div class="chart-container">
+                    <div v-for="(candidate, index) in candidatesInfo" :key="index">
+                        <div class="vote-count">{{ candidate.votes }}</div>
+                        <div class="bar" :style="{ height: getBarHeight(candidate.votes) + 'px' }">
+                            <div class="bar-label">{{ candidate.name }}</div>
+                        </div>
+                    </div>
+                </div>
+                <button @click="exportVotingResults">Export Voting Results</button>
+                <button class="feedback-button" @click="toggleFeedbackModal">User Feedback</button>
+                <div class="feedback-modal" :style="{ display: feedbackModalVisible? 'flex' : 'none' }">
+                    <div class="feedback-content">
+                        <h3>User Feedback</h3>
+                        <textarea v-model="newFeedback" placeholder="Please enter your feedback"></textarea>
+                        <button @click="submitFeedback">Submit Feedback</button>
+                        <div class="feedback-list">
+                            <p v-for="(feedback, index) in feedbacks" :key="index">{{ feedback }}</p>
+                        </div>
+                        <button @click="toggleFeedbackModal">Close</button>
+                    </div>
+                </div>
+            </div>
+            <div v-if="errorMessage">{{ errorMessage }}</div>
+        </main>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        let web3;
+        let voteContract;
+        let senderAccount;
+        const VOTE_INTERVAL = 2 * 60 * 60 * 1000; // 2 hours, in milliseconds
+        let voteTimestamps = {};
+        let countdownInterval;
+
+        async function initWeb3() {
+            try {
+                if (typeof window.ethereum!== 'undefined') {
+                    console.log('MetaMask detected, using MetaMask connection');
+                    web3 = new Web3(window.ethereum);
+                    await window.ethereum.request({ method: 'eth_requestAccounts' });
+                } else {
+                    console.log('MetaMask not detected, using Infura connection');
+                    web3 = new Web3(new Web3.providers.HttpProvider('https://sepolia.infura.io/v3/xxxxx')); // write your own infura ID
+
+                    const privateKey = 'xxxxxx'; // specify your own account private key
+                    const account = web3.eth.accounts.privateKeyToAccount(privateKey);
+                    web3.eth.accounts.wallet.add(account);
+                    senderAccount = account.address;
+                }
+
+                const contractAddress = "xxxxxxxx"; // Replace with the actual contract address
+                const contractAbi = [
+                    {
+                        "constant": true,
+                        "inputs": [],
+                        "name": "host",
+                        "outputs": [
+                            {
+                                "name": "",
+                                "type": "address"
+                            }
+                        ],
+                        "payable": false,
+                        "stateMutability": "view",
+                        "type": "function"
+                    },
+                    {
+                        "constant": false,
+                        "inputs": [
+                            {
+                                "name": "_voters",
+                                "type": "address[]"
+                            }
+                        ],
+                        "name": "mandate",
+                        "outputs": [],
+                        "payable": false,
+                        "stateMutability": "nonpayable",
+                        "type": "function"
+                    },
+                    {
+                        "constant": false,
+                        "inputs": [
+                            {
+                                "name": "_candidateId",
+                                "type": "uint256"
+                            }
+                        ],
+                        "name": "vote",
+                        "outputs": [],
+                        "payable": false,
+                        "stateMutability": "nonpayable",
+                        "type": "function"
+                    },
+                    {
+                        "constant": false,
+                        "inputs": [],
+                        "name": "addCandidate",
+                        "outputs": [],
+                        "payable": false,
+                        "stateMutability": "nonpayable",
+                        "type": "function"
+                    },
+                    {
+                        "constant": true,
+                        "inputs": [],
+                        "name": "getCandidateCount",
+                        "outputs": [
+                            {
+                                "name": "",
+                                "type": "uint256"
+                            }
+                        ],
+                        "payable": false,
+                        "stateMutability": "view",
+                        "type": "function"
+                    },
+                    {
+                        "constant": true,
+                        "inputs": [
+                            {
+                                "name": "_candidateId",
+                                "type": "uint256"
+                            }
+                        ],
+                        "name": "getCandidateVotes",
+                        "outputs": [
+                            {
+                                "name": "",
+                                "type": "uint256"
+                            }
+                        ],
+                        "payable": false,
+                        "stateMutability": "view",
+                        "type": "function"
+                    }
+                ];
+
+                voteContract = new web3.eth.Contract(contractAbi, contractAddress);
+            } catch (error) {
+                console.error('Error initializing Web3 connection:', error);
+            }
+        }
+
+        createApp({
+            data() {
+                return {
+                    step: 1,
+                    host: '',
+                    voterAddresses: '',
+                    candidateCount: 0,
+                    candidatesInfo: [],
+                    errorMessage: '',
+                    feedbacks: [],
+                    newFeedback: '',
+                    feedbackModalVisible: false
+                };
+            },
+            methods: {
+                async mandate() {
+                    try {
+                        console.log('Start executing the mandate method');
+                        const voterArray = this.voterAddresses.split(',').map(addr => addr.trim());
+                        console.log('Processed voter address array:', voterArray);
+                        if (!web3 ||!voteContract) {
+                            throw new Error('Web3 or contract object not properly initialized');
+                        }
+                        const mandateMethod = voteContract.methods.mandate(voterArray);
+                        const estimateGas = await mandateMethod.estimateGas({ from: senderAccount });
+                        console.log('Estimated gas consumption:', estimateGas);
+                        await mandateMethod.send({ from: senderAccount, gas: estimateGas });
+                        console.log('Votes distributed successfully');
+                        this.candidateCount = await voteContract.methods.getCandidateCount().call();
+                        console.log('Current number of candidates:', this.candidateCount);
+                        if (this.candidateCount === 0) {
+                            console.warn('The number of candidates is 0, please check the candidate addition logic in the contract.');
+                        }
+                        this.step = 2;
+                        await this.fetchCandidatesInfo();
+                    } catch (error) {
+                        console.error('Error distributing votes:', error);
+                        this.errorMessage = 'Error distributing voting rights, please check the network and contract interaction';
+                    }
+                },
+                async vote(index) {
+                    try {
+                        console.log('Start executing the vote method, voting for candidate:', index);
+                        if (!web3 ||!voteContract) {
+                            throw new Error('Web3 or contract object not properly initialized');
+                        }
+                        const voteMethod = voteContract.methods.vote(index);
+                        const estimateGas = await voteMethod.estimateGas({ from: senderAccount });
+                        console.log('Estimated gas consumption:', estimateGas);
+                        await voteMethod.send({ from: senderAccount, gas: estimateGas });
+                        console.log('Voting successful');
+                        voteTimestamps[index] = Date.now();
+                        await this.fetchCandidatesInfo();
+                        this.startCountdown();
+                    } catch (error) {
+                        console.error('Error voting:', error);
+                        this.errorMessage = 'Error during voting, please check the network and contract interaction';
+                    }
+                },
+                async candidateName(index) {
+                    return `Candidate ${index + 1}`;
+                },
+                async getCandidateVotes(index) {
+                    if (!web3 ||!voteContract) {
+                        throw new Error('Web3 or contract object not properly initialized');
+                    }
+                    return await voteContract.methods.getCandidateVotes(index).call();
+                },
+                async fetchCandidatesInfo() {
+                    try {
+                        const candidatesInfo = [];
+                        for (let i = 0; i < this.candidateCount; i++) {
+                            let name;
+                            try {
+                                name = await this.candidateName(i);
+                            } catch (nameError) {
+                                console.error('Error getting candidate name:', nameError);
+                                continue;
+                            }
+                            let votes;
+                            try {
+                                votes = await this.getCandidateVotes(i);
+                            } catch (votesError) {
+                                console.error('Error getting candidate votes:', votesError);
+                                continue;
+                            }
+                            candidatesInfo.push({ name, votes });
+                        }
+                        this.candidatesInfo = candidatesInfo;
+                        console.log('Candidate information:', this.candidatesInfo);
+                    } catch (error) {
+                        console.error('Error getting candidate information:', error);
+                        this.errorMessage = 'Error getting candidate information, please check the network and contract interaction';
+                    }
+                },
+                isVoteDisabled(index) {
+                    const lastVoteTime = voteTimestamps[index];
+                    if (lastVoteTime) {
+                        return Date.now() - lastVoteTime < VOTE_INTERVAL;
+                    }
+                    return false;
+                },
+                getButtonText(index) {
+                    return this.isVoteDisabled(index)? 'Voted' : 'Vote';
+                },
+                getRemainingTime(index) {
+                    const lastVoteTime = voteTimestamps[index];
+                    if (lastVoteTime) {
+                        const remainingTime = VOTE_INTERVAL - (Date.now() - lastVoteTime);
+                        if (remainingTime <= 0) {
+                            return '';
+                        }
+                        const hours = Math.floor(remainingTime / (1000 * 60 * 60));
+                        const minutes = Math.floor((remainingTime % (1000 * 60 * 60)) / (1000 * 60));
+                        const seconds = Math.floor((remainingTime % (1000 * 60)) / 1000);
+                        return `Remaining time: ${hours} hours ${minutes} minutes ${seconds} seconds`;
+                    }
+                    return '';
+                },
+                startCountdown() {
+                    if (countdownInterval) {
+                        clearInterval(countdownInterval);
+                    }
+                    countdownInterval = setInterval(() => {
+                        this.$forceUpdate();
+                    }, 1000);
+                },
+                getBarHeight(votes) {
+                    // Simple linear mapping, map the number of votes to a height range of 0 - 250 pixels
+                    const maxVotes = Math.max(...this.candidatesInfo.map(c => c.votes));
+                    if (maxVotes === 0) return 0;
+                    return (votes / maxVotes) * 250;
+                },
+                exportVotingResults() {
+                    let csvContent = "Candidate Name,Votes\n";
+                    this.candidatesInfo.forEach(candidate => {
+                        csvContent += `${candidate.name},${candidate.votes}\n`;
+                    });
+                    const blob = new Blob([csvContent], { type: 'text/csv' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'voting_results.csv';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                },
+                toggleFeedbackModal() {
+                    this.feedbackModalVisible =!this.feedbackModalVisible;
+                },
+                submitFeedback() {
+                    if (this.newFeedback.trim()!== '') {
+                        this.feedbacks.push(this.newFeedback);
+                        this.newFeedback = '';
+                    }
+                }
+            },
+            async mounted() {
+                await initWeb3();
+                if (voteContract) {
+                    try {
+                        this.host = await voteContract.methods.host().call();
+                    } catch (error) {
+                        console.error('Error getting host address:', error);
+                        this.errorMessage = 'Error getting host address, please check the network and contract interaction';
+                    }
+                } else {
+                    console.error('Contract instance not properly initialized');
+                    this.errorMessage = 'Contract instance not properly initialized, please check the contract address and ABI';
+                }
+            },
+            beforeUnmount() {
+                if (countdownInterval) {
+                    clearInterval(countdownInterval);
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+
+</html>
